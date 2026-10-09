@@ -6,13 +6,15 @@ const renderer=new THREE.WebGLRenderer({antialias:true});renderer.setPixelRatio(
 scene.add(new THREE.HemisphereLight(0xffffff,0x334466,2.5));
 const light=new THREE.DirectionalLight(0xffffff,2);light.position.set(3,4,5);scene.add(light);
 const pivot=new THREE.Group();scene.add(pivot);
-const group=new THREE.Group();pivot.add(group);
-let center=new THREE.Vector3(),radius=1,distance=10,yaw=.7,pitch=.5,pan=new THREE.Vector3(),loaded=false;
+// STEP/SolidWorks uses Z-up; Three.js screen uses Y-up.
+const cadFrame=new THREE.Group();cadFrame.rotation.x=-Math.PI/2;pivot.add(cadFrame);
+const group=new THREE.Group();cadFrame.add(group);
+let center=new THREE.Vector3(),radius=1,distance=10,pan=new THREE.Vector3(),loaded=false;
 function resize(){let w=viewport.clientWidth,h=viewport.clientHeight;renderer.setSize(w,h,false);camera.aspect=w/Math.max(1,h);camera.updateProjectionMatrix()}
 window.addEventListener('resize',resize);resize();
 function frame(){requestAnimationFrame(frame);camera.position.copy(pan).add(new THREE.Vector3(0,0,distance));camera.up.set(0,1,0);camera.lookAt(pan);renderer.render(scene,camera)}frame();
-function fit(){if(!loaded)return;pan.set(0,0,0);distance=radius/Math.sin(THREE.MathUtils.degToRad(camera.fov/2))*1.5;camera.near=Math.max(.001,radius/10000);camera.far=Math.max(1000,radius*1000);camera.updateProjectionMatrix()}
-function view(name){const v={iso:[-.45,.65,0],front:[0,0,0],back:[0,Math.PI,0],left:[0,-Math.PI/2,0],right:[0,Math.PI/2,0],top:[-Math.PI/2,0,0]};const a=v[name]||v.iso;pivot.quaternion.setFromEuler(new THREE.Euler(a[0],a[1],a[2],'XYZ'));}
+function fit(){if(!loaded)return;pan.set(0,0,0);const halfV=THREE.MathUtils.degToRad(camera.fov/2);const halfH=Math.atan(Math.tan(halfV)*camera.aspect);const smallest=Math.max(.05,Math.min(halfV,halfH));distance=radius/Math.sin(smallest)*1.18;camera.near=Math.max(.001,distance-radius*2);camera.far=Math.max(1000,distance+radius*10);camera.updateProjectionMatrix()}
+function view(name){const v={iso:[.615,-Math.PI/4,0],front:[0,0,0],back:[0,Math.PI,0],left:[0,-Math.PI/2,0],right:[0,Math.PI/2,0],top:[Math.PI/2,0,0]};const a=v[name]||v.iso;pivot.quaternion.setFromEuler(new THREE.Euler(a[0],a[1],a[2],'XYZ'));}
 document.querySelectorAll('[data-view]').forEach(b=>b.onclick=()=>view(b.dataset.view));
 $('fit').onclick=fit;
 const open=()=>window.AndroidBridge?.openFile();$('open').onclick=open;$('openEmpty').onclick=open;
@@ -51,6 +53,7 @@ if(!meshes.length)throw Error('Görüntülenebilir geometri yok');
 for(const m of [...group.children]){group.remove(m);m.geometry.dispose();m.material.dispose()}
 // Reset previous model transform before calculating bounds for the new model.
 group.position.set(0,0,0);
+group.rotation.set(0,0,0);cadFrame.rotation.set(-Math.PI/2,0,0);pivot.rotation.set(0,0,0);pivot.quaternion.identity();
 meshes.forEach(m=>group.add(m));
 const bounds=new THREE.Box3().setFromObject(group);
 // Fixed bounding-box midpoint prevents asymmetric surface density from shifting the pivot.
