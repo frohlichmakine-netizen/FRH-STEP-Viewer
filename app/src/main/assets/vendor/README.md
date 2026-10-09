@@ -1,0 +1,1 @@
+Libraries downloaded at build time and bundled into the APK for offline operation.
