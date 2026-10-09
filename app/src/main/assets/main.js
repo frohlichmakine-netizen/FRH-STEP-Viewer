@@ -17,6 +17,32 @@ $('fit').onclick=fit;
 const open=()=>window.AndroidBridge?.openFile();$('open').onclick=open;$('openEmpty').onclick=open;
 window.showStatus=t=>{$('busyText').textContent=t;$('busy').classList.remove('hidden');$('error').classList.add('hidden')};
 window.showError=t=>{$('busy').classList.add('hidden');$('error').textContent=t;$('error').classList.remove('hidden')};
+// Area-weighted centroid of tessellated CAD surfaces: stable pivot for asymmetric geometry.
+function surfaceCenter(meshes,fallback){
+ const weighted=new THREE.Vector3(),a=new THREE.Vector3(),b=new THREE.Vector3(),d=new THREE.Vector3();
+ const ab=new THREE.Vector3(),ac=new THREE.Vector3();
+ let totalArea=0;
+ for(const mesh of meshes){
+  const geo=mesh.geometry,pos=geo.getAttribute('position'),idx=geo.getIndex();
+  if(!pos||!idx)continue;
+  for(let i=0;i+2<idx.count;i+=3){
+   a.fromBufferAttribute(pos,idx.getX(i));b.fromBufferAttribute(pos,idx.getX(i+1));d.fromBufferAttribute(pos,idx.getX(i+2));
+   const area=ab.subVectors(b,a).cross(ac.subVectors(d,a)).length()*.5;
+   if(!Number.isFinite(area)||area<=0)continue;
+   weighted.addScaledVector(a,area/3).addScaledVector(b,area/3).addScaledVector(d,area/3);
+   totalArea+=area;
+  }
+ }
+ return totalArea>0&&Number.isFinite(totalArea)?weighted.divideScalar(totalArea):fallback.clone();
+}
+function enclosingRadius(bounds,pivot){
+ let max=0;
+ for(const x of [bounds.min.x,bounds.max.x])
+ for(const y of [bounds.min.y,bounds.max.y])
+ for(const z of [bounds.min.z,bounds.max.z])
+ max=Math.max(max,pivot.distanceToSquared(new THREE.Vector3(x,y,z)));
+ return Math.max(.01,Math.sqrt(max));
+}
 let occtPromise;
 function getOcct(){return occtPromise??=(window.occtimportjs({locateFile:p=>new URL('./vendor/'+p,location.href).href}).catch(e=>{occtPromise=null;throw e}))}
 window.loadStepFromAndroid=async(name,size)=>{
@@ -40,7 +66,8 @@ meshes.push(new THREE.Mesh(geom,mat));
 if(!meshes.length)throw Error('Görüntülenebilir geometri yok');
 for(const m of [...group.children]){group.remove(m);m.geometry.dispose();m.material.dispose()}
 meshes.forEach(m=>group.add(m));
-let b=new THREE.Box3().setFromObject(group);b.getCenter(center);radius=Math.max(.01,b.getBoundingSphere(new THREE.Sphere()).radius);
+const bounds=new THREE.Box3().setFromObject(group),boxCenter=bounds.getCenter(new THREE.Vector3());
+center.copy(surfaceCenter(meshes,boxCenter));radius=enclosingRadius(bounds,center);
 loaded=true;view('iso');fit();$('empty').classList.add('hidden');$('busy').classList.add('hidden');
 }catch(e){window.showError('Dosya açılamadı: '+(e.message||e))}
 };
