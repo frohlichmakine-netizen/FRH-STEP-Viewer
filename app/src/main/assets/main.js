@@ -18,24 +18,7 @@ $('fit').onclick=fit;
 const open=()=>window.AndroidBridge?.openFile();$('open').onclick=open;$('openEmpty').onclick=open;
 window.showStatus=t=>{$('busyText').textContent=t;$('busy').classList.remove('hidden');$('error').classList.add('hidden')};
 window.showError=t=>{$('busy').classList.add('hidden');$('error').textContent=t;$('error').classList.remove('hidden')};
-// Area-weighted centroid of tessellated CAD surfaces: stable pivot for asymmetric geometry.
-function surfaceCenter(meshes,fallback){
- const weighted=new THREE.Vector3(),a=new THREE.Vector3(),b=new THREE.Vector3(),d=new THREE.Vector3();
- const ab=new THREE.Vector3(),ac=new THREE.Vector3();
- let totalArea=0;
- for(const mesh of meshes){
-  const geo=mesh.geometry,pos=geo.getAttribute('position'),idx=geo.getIndex();
-  if(!pos||!idx)continue;
-  for(let i=0;i+2<idx.count;i+=3){
-   a.fromBufferAttribute(pos,idx.getX(i));b.fromBufferAttribute(pos,idx.getX(i+1));d.fromBufferAttribute(pos,idx.getX(i+2));
-   const area=ab.subVectors(b,a).cross(ac.subVectors(d,a)).length()*.5;
-   if(!Number.isFinite(area)||area<=0)continue;
-   weighted.addScaledVector(a,area/3).addScaledVector(b,area/3).addScaledVector(d,area/3);
-   totalArea+=area;
-  }
- }
- return totalArea>0&&Number.isFinite(totalArea)?weighted.divideScalar(totalArea):fallback.clone();
-}
+// Center of the entire model's geometric extent is the fixed rotation pivot.
 function enclosingRadius(bounds,pivot){
  let max=0;
  for(const x of [bounds.min.x,bounds.max.x])
@@ -66,10 +49,15 @@ meshes.push(new THREE.Mesh(geom,mat));
 }
 if(!meshes.length)throw Error('Görüntülenebilir geometri yok');
 for(const m of [...group.children]){group.remove(m);m.geometry.dispose();m.material.dispose()}
+// Reset previous model transform before calculating bounds for the new model.
+group.position.set(0,0,0);
 meshes.forEach(m=>group.add(m));
-const bounds=new THREE.Box3().setFromObject(group),boxCenter=bounds.getCenter(new THREE.Vector3());
-center.copy(surfaceCenter(meshes,boxCenter));radius=enclosingRadius(bounds,center);
-group.position.copy(center).multiplyScalar(-1);pivot.position.set(0,0,0);pivot.quaternion.identity();
+const bounds=new THREE.Box3().setFromObject(group);
+// Fixed bounding-box midpoint prevents asymmetric surface density from shifting the pivot.
+bounds.getCenter(center);
+radius=enclosingRadius(bounds,center);
+group.position.copy(center).multiplyScalar(-1);
+pivot.position.set(0,0,0);pivot.quaternion.identity();
 loaded=true;view('iso');fit();$('empty').classList.add('hidden');$('busy').classList.add('hidden');
 }catch(e){window.showError('Dosya açılamadı: '+(e.message||e))}
 };
