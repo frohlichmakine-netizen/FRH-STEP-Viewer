@@ -5,16 +5,47 @@ const camera=new THREE.PerspectiveCamera(45,1,.001,1e8);
 const renderer=new THREE.WebGLRenderer({antialias:true});renderer.setPixelRatio(Math.min(devicePixelRatio,2));viewport.appendChild(renderer.domElement);
 scene.add(new THREE.HemisphereLight(0xffffff,0x334466,2.5));
 const light=new THREE.DirectionalLight(0xffffff,2);light.position.set(3,4,5);scene.add(light);
+// Native STEP coordinates are immutable. X/Y/Z are not rewritten or axis-swapped.
 const pivot=new THREE.Group();scene.add(pivot);
-// STEP/SolidWorks uses Z-up; Three.js screen uses Y-up.
-const cadFrame=new THREE.Group();cadFrame.rotation.x=-Math.PI/2;pivot.add(cadFrame);
-const group=new THREE.Group();cadFrame.add(group);
+const group=new THREE.Group();pivot.add(group);
 let center=new THREE.Vector3(),radius=1,distance=10,pan=new THREE.Vector3(),loaded=false;
-function resize(){let w=viewport.clientWidth,h=viewport.clientHeight;renderer.setSize(w,h,false);camera.aspect=w/Math.max(1,h);camera.updateProjectionMatrix()}
-window.addEventListener('resize',resize);resize();
-function frame(){requestAnimationFrame(frame);camera.position.copy(pan).add(new THREE.Vector3(0,0,distance));camera.up.set(0,1,0);camera.lookAt(pan);renderer.render(scene,camera)}frame();
-function fit(){if(!loaded)return;pan.set(0,0,0);const halfV=THREE.MathUtils.degToRad(camera.fov/2);const halfH=Math.atan(Math.tan(halfV)*camera.aspect);const smallest=Math.max(.05,Math.min(halfV,halfH));distance=radius/Math.sin(smallest)*1.18;camera.near=Math.max(.001,distance-radius*2);camera.far=Math.max(1000,distance+radius*10);camera.updateProjectionMatrix()}
-function view(name){const v={iso:[.615,-Math.PI/4,0],front:[0,0,0],back:[0,Math.PI,0],left:[0,-Math.PI/2,0],right:[0,Math.PI/2,0],top:[Math.PI/2,0,0]};const a=v[name]||v.iso;pivot.quaternion.setFromEuler(new THREE.Euler(a[0],a[1],a[2],'XYZ'));}
+const zUp=new THREE.Vector3(0,0,1);
+const cameraDirections={
+ front:new THREE.Vector3(0,-1,0),back:new THREE.Vector3(0,1,0),
+ right:new THREE.Vector3(1,0,0),left:new THREE.Vector3(-1,0,0),
+ top:new THREE.Vector3(0,0,1),bottom:new THREE.Vector3(0,0,-1),
+ // Diagonal camera in STEP's right-handed Z-up coordinate system.
+ iso:new THREE.Vector3(1,-1,1).normalize()
+};
+let direction=cameraDirections.iso.clone();
+function resize(){const w=Math.max(1,viewport.clientWidth),h=Math.max(1,viewport.clientHeight);renderer.setSize(w,h,false);camera.aspect=w/h;camera.updateProjectionMatrix()}
+window.addEventListener('resize',resize);
+if(window.ResizeObserver)new ResizeObserver(resize).observe(viewport);
+resize();
+function frame(){
+ requestAnimationFrame(frame);
+ camera.position.copy(pan).addScaledVector(direction,distance);
+ // Top/bottom require a different screen-up vector from other views.
+ camera.up.copy(Math.abs(direction.z)>.999?new THREE.Vector3(0,1,0):zUp);
+ camera.lookAt(pan);
+ renderer.render(scene,camera);
+}
+frame();
+function fit(){
+ if(!loaded)return;
+ pan.set(0,0,0);
+ const v=THREE.MathUtils.degToRad(camera.fov/2);
+ const h=Math.atan(Math.tan(v)*camera.aspect);
+ distance=radius/Math.sin(Math.max(.01,Math.min(v,h)))*1.15;
+ camera.near=Math.max(.001,distance-radius*1.5);
+ camera.far=Math.max(1000,distance+radius*5);
+ camera.updateProjectionMatrix();
+}
+function view(name){
+ if(!cameraDirections[name])return;
+ pivot.quaternion.identity();
+ direction.copy(cameraDirections[name]);
+}
 document.querySelectorAll('[data-view]').forEach(b=>b.onclick=()=>view(b.dataset.view));
 $('fit').onclick=fit;
 const open=()=>window.AndroidBridge?.openFile();$('open').onclick=open;$('openEmpty').onclick=open;
@@ -53,8 +84,9 @@ if(!meshes.length)throw Error('Görüntülenebilir geometri yok');
 for(const m of [...group.children]){group.remove(m);m.geometry.dispose();m.material.dispose()}
 // Reset previous model transform before calculating bounds for the new model.
 group.position.set(0,0,0);
-group.rotation.set(0,0,0);cadFrame.rotation.set(-Math.PI/2,0,0);pivot.rotation.set(0,0,0);pivot.quaternion.identity();
+group.rotation.set(0,0,0);pivot.quaternion.identity();
 meshes.forEach(m=>group.add(m));
+// Bounding box is evaluated in the unmodified source coordinate system.
 const bounds=new THREE.Box3().setFromObject(group);
 // Fixed bounding-box midpoint prevents asymmetric surface density from shifting the pivot.
 bounds.getCenter(center);
@@ -68,7 +100,15 @@ const active=new Map();let prev=null;
 function pair(){let p=[...active.values()];if(p.length!==2)return null;return {x:(p[0].x+p[1].x)/2,y:(p[0].y+p[1].y)/2,d:Math.hypot(p[0].x-p[1].x,p[0].y-p[1].y)}}
 viewport.addEventListener('pointerdown',e=>{if(!loaded)return;viewport.setPointerCapture(e.pointerId);active.set(e.pointerId,{x:e.clientX,y:e.clientY});prev=active.size===1?{x:e.clientX,y:e.clientY}:pair()});
 viewport.addEventListener('pointermove',e=>{if(!active.has(e.pointerId))return;active.set(e.pointerId,{x:e.clientX,y:e.clientY});let now=active.size===1?{x:e.clientX,y:e.clientY}:pair();if(!now||!prev){prev=now;return}
-if(active.size===1){const dx=now.x-prev.x,dy=now.y-prev.y;const axis=new THREE.Vector3(dy,dx,0);const angle=axis.length()*.008;if(angle>0){axis.normalize();pivot.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(axis,angle)).normalize()}}
+if(active.size===1){
+ const dx=now.x-prev.x,dy=now.y-prev.y;
+ camera.updateMatrixWorld();
+ const right=new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld,0);
+ const up=new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld,1);
+ const axis=up.multiplyScalar(dx).addScaledVector(right,dy);
+ const angle=axis.length()*.008;
+ if(angle>0)pivot.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(axis.normalize(),angle)).normalize();
+}
 else{if(now.d>0&&prev.d>0)distance=Math.max(radius*.05,Math.min(radius*500,distance*prev.d/now.d));let scale=2*distance*Math.tan(THREE.MathUtils.degToRad(camera.fov/2))/viewport.clientHeight;camera.updateMatrixWorld();pan.addScaledVector(new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld,0),-(now.x-prev.x)*scale).addScaledVector(new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld,1),(now.y-prev.y)*scale)}prev=now
 });
 function end(e){active.delete(e.pointerId);prev=active.size===1?[...active.values()][0]:pair()}
